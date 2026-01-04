@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediCheck - AI Medical Symptom Checker</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @keyframes fade-in {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fade-in 0.5s ease-out;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        import React, { useState, useEffect } from 'react';
+import { Activity, Heart, Brain, Stethoscope, AlertCircle, CheckCircle, Clock, User, Thermometer, Droplet, Wind, Zap, Shield, TrendingUp, FileText, Download } from 'lucide-react';
+
+export default function MediCheck() {
+  const [step, setStep] = useState('welcome');
+  const [symptoms, setSymptoms] = useState('');
+  const [age, setAge] = useState('');
+  const [gender, setGender] = useState('');
+  const [duration, setDuration] = useState('');
+  const [severity, setSeverity] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [analysis, setAnalysis] = useState(null);
+  const [chatHistory, setChatHistory] = useState([]);
+  const [followUpQuestion, setFollowUpQuestion] = useState('');
+
+  // Animated background particles
+  const [particles, setParticles] = useState([]);
+
+  useEffect(() => {
+    const newParticles = Array.from({ length: 20 }, (_, i) => ({
+      id: i,
+      x: Math.random() * 100,
+      y: Math.random() * 100,
+      size: Math.random() * 4 + 2,
+      duration: Math.random() * 20 + 10
+    }));
+    setParticles(newParticles);
+  }, []);
+
+  const analyzeSymptoms = async () => {
+    setLoading(true);
+    
+    const userMessage = {
+      role: 'user',
+      content: `Patient Details:
+- Age: ${age} years
+- Gender: ${gender}
+- Symptoms: ${symptoms}
+- Duration: ${duration}
+- Severity: ${severity}/10`
+    };
+    
+    setChatHistory(prev => [...prev, userMessage]);
+
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          messages: [
+            {
+              role: "user",
+              content: `You are an AI medical assistant for MediCheck, a symptom checker application in India. Analyze the following patient information and provide a detailed assessment. Be empathetic but clear that this is not a replacement for professional medical advice.
+
+Patient Information:
+- Age: ${age} years
+- Gender: ${gender}
+- Symptoms: ${symptoms}
+- Duration: ${duration}
+- Severity: ${severity}/10
+
+Provide your response in this exact JSON format:
+{
+  "condition": "Most likely condition name",
+  "confidence": "High/Medium/Low",
+  "description": "Brief description of the condition",
+  "possibleCauses": ["cause1", "cause2", "cause3"],
+  "recommendations": ["recommendation1", "recommendation2", "recommendation3"],
+  "urgency": "Emergency/Urgent/Moderate/Low",
+  "specialistType": "Type of doctor to consult",
+  "redFlags": ["warning sign 1", "warning sign 2"],
+  "homeRemedies": ["remedy1", "remedy2", "remedy3"]
+}
+
+Respond ONLY with valid JSON, no other text.`
+            }
+          ],
+        }),
+      });
+
+      const data = await response.json();
+      const responseText = data.content[0].text;
+      
+      // Parse the JSON response
+      const cleanJson = responseText.replace(/```json|```/g, '').trim();
+      const result = JSON.parse(cleanJson);
+      
+      setAnalysis(result);
+      setChatHistory(prev => [...prev, { role: 'assistant', content: result }]);
+      setStep('results');
+    } catch (err) {
+      console.error('Analysis error:', err);
+      setAnalysis({
+        condition: "Unable to complete analysis",
+        confidence: "Low",
+        description: "We encountered an issue analyzing your symptoms. Please try again or consult a healthcare professional.",
+        possibleCauses: ["System error"],
+        recommendations: ["Please refresh and try again", "Consult a doctor if symptoms persist"],
+        urgency: "Moderate",
+        specialistType: "General Physician",
+        redFlags: [],
+        homeRemedies: []
+      });
+      setStep('results');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const askFollowUp = async () => {
+    if (!followUpQuestion.trim()) return;
+    
+    setLoading(true);
+    const userMsg = { role: 'user', content: followUpQuestion };
+    setChatHistory(prev => [...prev, userMsg]);
+    setFollowUpQuestion('');
+
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          messages: chatHistory.concat(userMsg).map(msg => ({
+            role: msg.role === 'user' ? 'user' : 'assistant',
+            content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
+          })).concat([{
+            role: 'user',
+            content: followUpQuestion + "\n\nProvide a helpful, empathetic response as a medical AI assistant. Keep it concise but informative."
+          }])
+        }),
+      });
+
+      const data = await response.json();
+      const responseText = data.content[0].text;
+      
+      setChatHistory(prev => [...prev, { role: 'assistant', content: responseText }]);
+    } catch (err) {
+      console.error('Follow-up error:', err);
+      setChatHistory(prev => [...prev, { 
+        role: 'assistant', 
+        content: "I'm having trouble responding right now. Please try again or consult a healthcare professional." 
+      }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getUrgencyColor = (urgency) => {
+    switch(urgency?.toLowerCase()) {
+      case 'emergency': return 'text-red-600 bg-red-50 border-red-200';
+      case 'urgent': return 'text-orange-600 bg-orange-50 border-orange-200';
+      case 'moderate': return 'text-yellow-600 bg-yellow-50 border-yellow-200';
+      default: return 'text-green-600 bg-green-50 border-green-200';
+    }
+  };
+
+  const downloadReport = () => {
+    const report = `
+═══════════════════════════════════════════════════════════
+              MEDICHECK - SYMPTOM ANALYSIS REPORT
+═══════════════════════════════════════════════════════════
+
+Generated: ${new Date().toLocaleString('en-IN', { 
+  dateStyle: 'full', 
+  timeStyle: 'short' 
+})}
+Developed by: Team Quantum Giant
+Report ID: MC-${Date.now()}
+
+═══════════════════════════════════════════════════════════
+                    PATIENT INFORMATION
+═══════════════════════════════════════════════════════════
+
+Age:              ${age} years
+Gender:           ${gender}
+Reported Symptoms: ${symptoms}
+Duration:         ${duration}
+Severity Level:   ${severity}/10
+
+═══════════════════════════════════════════════════════════
+                     ANALYSIS RESULTS
+═══════════════════════════════════════════════════════════
+
+CONDITION IDENTIFIED: ${analysis.condition}
+Confidence Level: ${analysis.confidence}
+Urgency Level: ${analysis.urgency}
+
+DESCRIPTION:
+${analysis.description}
+
+───────────────────────────────────────────────────────────
+POSSIBLE CAUSES:
+───────────────────────────────────────────────────────────
+${analysis.possibleCauses.map((c, i) => `${i + 1}. ${c}`).join('\n')}
+
+───────────────────────────────────────────────────────────
+RECOMMENDATIONS:
+───────────────────────────────────────────────────────────
+${analysis.recommendations.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+
+───────────────────────────────────────────────────────────
+SPECIALIST CONSULTATION:
+───────────────────────────────────────────────────────────
+Recommended Specialist: ${analysis.specialistType}
+
+${analysis.redFlags && analysis.redFlags.length > 0 ? `
+───────────────────────────────────────────────────────────
+⚠️  WARNING SIGNS TO WATCH:
+───────────────────────────────────────────────────────────
+${analysis.redFlags.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+` : ''}
+
+${analysis.homeRemedies && analysis.homeRemedies.length > 0 ? `
+───────────────────────────────────────────────────────────
+🏠 HOME CARE SUGGESTIONS:
+───────────────────────────────────────────────────────────
+${analysis.homeRemedies.map((h, i) => `${i + 1}. ${h}`).join('\n')}
+` : ''}
+
+═══════════════════════════════════════════════════════════
+                    IMPORTANT DISCLAIMER
+═══════════════════════════════════════════════════════════
+
+This is an AI-generated assessment and NOT a medical diagnosis.
+This report is for informational purposes only.
+
+⚠️  Please consult a qualified healthcare professional for:
+   • Proper medical diagnosis
+   • Treatment recommendations
+   • Prescription medications
+   • Any serious or worsening symptoms
+
+If experiencing a medical emergency, call emergency services
+immediately or visit the nearest hospital.
+
+═══════════════════════════════════════════════════════════
+              Powered by Team Quantum Giant
+                    www.medicheck.in
+═══════════════════════════════════════════════════════════
+    `;
+    
+    try {
+      const blob = new Blob([report], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `MediCheck_Report_${new Date().toISOString().split('T')[0]}_${Date.now()}.txt`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      // Show success message
+      alert('✅ Report downloaded successfully!');
+    } catch (error) {
+      console.error('Download error:', error);
+      alert('❌ Failed to download report. Please try again.');
+    }
+  };
+
+  const findDoctorsNearby = () => {
+    // Get user's location and open Google Maps with relevant search
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          const searchQuery = encodeURIComponent(`${analysis.specialistType} near me`);
+          const mapsUrl = `https://www.google.com/maps/search/${searchQuery}/@${latitude},${longitude},14z`;
+          window.open(mapsUrl, '_blank');
+        },
+        (error) => {
+          console.error('Location error:', error);
+          // Fallback: Open Google Maps without location
+          const searchQuery = encodeURIComponent(analysis.specialistType);
+          const mapsUrl = `https://www.google.com/maps/search/${searchQuery}`;
+          window.open(mapsUrl, '_blank');
+        }
+      );
+    } else {
+      // Browser doesn't support geolocation
+      const searchQuery = encodeURIComponent(analysis.specialistType);
+      const mapsUrl = `https://www.google.com/maps/search/${searchQuery}`;
+      window.open(mapsUrl, '_blank');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 relative overflow-hidden">
+      {/* Animated background particles */}
+      {particles.map(p => (
+        <div
+          key={p.id}
+          className="absolute rounded-full bg-blue-200 opacity-20 animate-pulse"
+          style={{
+            left: `${p.x}%`,
+            top: `${p.y}%`,
+            width: `${p.size}px`,
+            height: `${p.size}px`,
+            animationDuration: `${p.duration}s`
+          }}
+        />
+      ))}
+
+      {/* Header */}
+      <header className="relative z-10 bg-white/80 backdrop-blur-md shadow-lg border-b-4 border-blue-500">
+        <div className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Stethoscope className="w-10 h-10 text-blue-600" />
+              <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-ping" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                MediCheck
+              </h1>
+              <p className="text-xs text-gray-600">By Quantum Giant</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <div className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-semibold flex items-center gap-1">
+              <Shield className="w-4 h-4" />
+              Secure
+            </div>
+            <div className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-semibold flex items-center gap-1">
+              <Zap className="w-4 h-4" />
+              AI-Powered
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="relative z-10 max-w-6xl mx-auto px-6 py-8">
+        {step === 'welcome' && (
+          <div className="space-y-8 animate-fade-in">
+            {/* Hero Section */}
+            <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl p-12 text-white shadow-2xl transform hover:scale-105 transition-all duration-300">
+              <div className="flex items-center gap-6">
+                <div className="flex-1">
+                  <h2 className="text-5xl font-bold mb-4">Welcome to MediCheck</h2>
+                  <p className="text-xl text-blue-100 mb-6">
+                    Your AI-powered health companion. Get instant symptom analysis powered by advanced machine learning technology.
+                  </p>
+                  <div className="flex gap-4 flex-wrap">
+                    <div className="flex items-center gap-2 bg-white/20 px-4 py-2 rounded-full backdrop-blur">
+                      <Brain className="w-5 h-5" />
+                      <span className="font-semibold">Smart AI Analysis</span>
+                    </div>
+                    <div className="flex items-center gap-2 bg-white/20 px-4 py-2 rounded-full backdrop-blur">
+                      <Clock className="w-5 h-5" />
+                      <span className="font-semibold">24/7 Available</span>
+                    </div>
+                    <div className="flex items-center gap-2 bg-white/20 px-4 py-2 rounded-full backdrop-blur">
+                      <Heart className="w-5 h-5" />
+                      <span className="font-semibold">Trusted by 10K+ Users</span>
+                    </div>
+                  </div>
+                </div>
+                <Activity className="w-48 h-48 text-white/30" />
+              </div>
+            </div>
+
+            {/* Features Grid */}
+            <div className="grid md:grid-cols-3 gap-6">
+              {[
+                { icon: Brain, title: "Smart Analysis", desc: "AI-powered symptom assessment using deep learning", color: "blue" },
+                { icon: Shield, title: "Privacy First", desc: "Your data is secure and never shared", color: "green" },
+                { icon: TrendingUp, title: "Accurate Results", desc: "Built on comprehensive medical knowledge", color: "purple" }
+              ].map((feature, i) => (
+                <div key={i} className={`bg-white rounded-2xl p-6 shadow-lg border-2 border-${feature.color}-100 hover:shadow-2xl hover:-translate-y-2 transition-all duration-300`}>
+                  <div className={`w-14 h-14 bg-${feature.color}-100 rounded-xl flex items-center justify-center mb-4`}>
+                    <feature.icon className={`w-8 h-8 text-${feature.color}-600`} />
+                  </div>
+                  <h3 className="text-xl font-bold mb-2">{feature.title}</h3>
+                  <p className="text-gray-600">{feature.desc}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Start Button */}
+            <div className="text-center">
+              <button
+                onClick={() => setStep('form')}
+                className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-12 py-5 rounded-2xl font-bold text-xl shadow-2xl hover:shadow-blue-500/50 hover:scale-110 transition-all duration-300 flex items-center gap-3 mx-auto"
+              >
+                Start Symptom Check
+                <Thermometer className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Disclaimer */}
+            <div className="bg-yellow-50 border-2 border-yellow-200 rounded-2xl p-6 flex gap-4">
+              <AlertCircle className="w-6 h-6 text-yellow-600 flex-shrink-0 mt-1" />
+              <div>
+                <h4 className="font-bold text-yellow-900 mb-2">Important Disclaimer</h4>
+                <p className="text-yellow-800 text-sm">
+                  MediCheck is an AI-powered tool designed to provide general health information. It is NOT a substitute for professional medical advice, diagnosis, or treatment. Always consult with a qualified healthcare provider for medical concerns.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {step === 'form' && (
+          <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
+            <div className="bg-white rounded-3xl shadow-2xl p-8 border-t-4 border-blue-500">
+              <h2 className="text-3xl font-bold mb-6 flex items-center gap-3">
+                <User className="w-8 h-8 text-blue-600" />
+                Tell Us About Your Symptoms
+              </h2>
+
+              <div className="space-y-6">
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-semibold mb-2 text-gray-700">Age (years)</label>
+                    <input
+                      type="number"
+                      value={age}
+                      onChange={(e) => setAge(e.target.value)}
+                      className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
+                      placeholder="e.g., 25"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold mb-2 text-gray-700">Gender</label>
+                    <select
+                      value={gender}
+                      onChange={(e) => setGender(e.target.value)}
+                      className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
+                    >
+                      <option value="">Select gender</option>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold mb-2 text-gray-700">Describe Your Symptoms</label>
+                  <textarea
+                    value={symptoms}
+                    onChange={(e) => setSymptoms(e.target.value)}
+                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors h-32 resize-none"
+                    placeholder="e.g., I have a persistent headache with nausea and sensitivity to light..."
+                  />
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-semibold mb-2 text-gray-700">Duration</label>
+                    <select
+                      value={duration}
+                      onChange={(e) => setDuration(e.target.value)}
+                      className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
+                    >
+                      <option value="">Select duration</option>
+                      <option value="Less than 24 hours">Less than 24 hours</option>
+                      <option value="1-3 days">1-3 days</option>
+                      <option value="4-7 days">4-7 days</option>
+                      <option value="1-2 weeks">1-2 weeks</option>
+                      <option value="More than 2 weeks">More than 2 weeks</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold mb-2 text-gray-700">Severity (1-10)</label>
+                    <input
+                      type="range"
+                      min="1"
+                      max="10"
+                      value={severity}
+                      onChange={(e) => setSeverity(e.target.value)}
+                      className="w-full h-3 bg-gradient-to-r from-green-400 via-yellow-400 to-red-500 rounded-lg appearance-none cursor-pointer mt-4"
+                    />
+                    <div className="text-center mt-2">
+                      <span className="text-3xl font-bold text-blue-600">{severity || '-'}</span>
+                      <span className="text-gray-500 text-sm ml-2">/10</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-4 pt-4">
+                  <button
+                    onClick={() => setStep('welcome')}
+                    className="px-6 py-3 border-2 border-gray-300 rounded-xl font-semibold hover:bg-gray-50 transition-colors"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={analyzeSymptoms}
+                    disabled={!symptoms || !age || !gender || !duration || !severity}
+                    className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-3 rounded-xl font-bold disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-xl transition-all duration-300 flex items-center justify-center gap-2"
+                  >
+                    <Brain className="w-5 h-5" />
+                    Analyze Symptoms
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {step === 'results' && analysis && (
+          <div className="space-y-6 animate-fade-in">
+            {/* Results Header */}
+            <div className="bg-white rounded-3xl shadow-2xl p-8 border-t-4 border-green-500">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
+                    <CheckCircle className="w-10 h-10 text-green-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-3xl font-bold text-gray-800">Analysis Complete</h2>
+                    <p className="text-gray-600">AI-powered assessment ready</p>
+                  </div>
+                </div>
+                <button
+                  onClick={downloadReport}
+                  className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors"
+                >
+                  <Download className="w-5 h-5" />
+                  Download Report
+                </button>
+              </div>
+
+              {/* Main Condition */}
+              <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-2xl p-6 border-2 border-blue-200">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <h3 className="text-2xl font-bold text-gray-800 mb-2">{analysis.condition}</h3>
+                    <p className="text-gray-700 mb-4">{analysis.description}</p>
+                    <div className="flex gap-3 flex-wrap">
+                      <span className={`px-4 py-2 rounded-full border-2 font-semibold ${getUrgencyColor(analysis.urgency)}`}>
+                        {analysis.urgency} Priority
+                      </span>
+                      <span className="px-4 py-2 rounded-full border-2 font-semibold text-blue-600 bg-blue-50 border-blue-200">
+                        {analysis.confidence} Confidence
+                      </span>
+                    </div>
+                  </div>
+                  <Stethoscope className="w-20 h-20 text-blue-300" />
+                </div>
+              </div>
+            </div>
+
+            {/* Details Grid */}
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Possible Causes */}
+              <div className="bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500">
+                <h4 className="font-bold text-lg mb-4 flex items-center gap-2 text-gray-800">
+                  <Droplet className="w-5 h-5 text-orange-500" />
+                  Possible Causes
+                </h4>
+                <ul className="space-y-2">
+                  {analysis.possibleCauses.map((cause, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="w-6 h-6 bg-orange-100 rounded-full flex items-center justify-center text-sm font-bold text-orange-600 flex-shrink-0">
+                        {i + 1}
+                      </span>
+                      <span className="text-gray-700">{cause}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Recommendations */}
+              <div className="bg-white rounded-2xl shadow-lg p-6 border-l-4 border-green-500">
+                <h4 className="font-bold text-lg mb-4 flex items-center gap-2 text-gray-800">
+                  <CheckCircle className="w-5 h-5 text-green-500" />
+                  Recommendations
+                </h4>
+                <ul className="space-y-2">
+                  {analysis.recommendations.map((rec, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center text-sm font-bold text-green-600 flex-shrink-0">
+                        {i + 1}
+                      </span>
+                      <span className="text-gray-700">{rec}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Red Flags */}
+              {analysis.redFlags && analysis.redFlags.length > 0 && (
+                <div className="bg-white rounded-2xl shadow-lg p-6 border-l-4 border-red-500">
+                  <h4 className="font-bold text-lg mb-4 flex items-center gap-2 text-gray-800">
+                    <AlertCircle className="w-5 h-5 text-red-500" />
+                    Warning Signs
+                  </h4>
+                  <ul className="space-y-2">
+                    {analysis.redFlags.map((flag, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="w-6 h-6 bg-red-100 rounded-full flex items-center justify-center text-sm font-bold text-red-600 flex-shrink-0">
+                          !
+                        </span>
+                        <span className="text-gray-700">{flag}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Home Remedies */}
+              {analysis.homeRemedies && analysis.homeRemedies.length > 0 && (
+                <div className="bg-white rounded-2xl shadow-lg p-6 border-l-4 border-purple-500">
+                  <h4 className="font-bold text-lg mb-4 flex items-center gap-2 text-gray-800">
+                    <Heart className="w-5 h-5 text-purple-500" />
+                    Home Care Tips
+                  </h4>
+                  <ul className="space-y-2">
+                    {analysis.homeRemedies.map((remedy, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="w-6 h-6 bg-purple-100 rounded-full flex items-center justify-center text-sm font-bold text-purple-600 flex-shrink-0">
+                          {i + 1}
+                        </span>
+                        <span className="text-gray-700">{remedy}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            {/* Specialist Recommendation */}
+            <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl shadow-lg p-6 text-white">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center backdrop-blur">
+                  <FileText className="w-8 h-8" />
+                </div>
+                <div className="flex-1">
+                  <h4 className="font-bold text-lg mb-1">Recommended Specialist</h4>
+                  <p className="text-xl font-bold text-indigo-100">{analysis.specialistType}</p>
+                </div>
+                <button 
+                  onClick={findDoctorsNearby}
+                  className="px-6 py-3 bg-white text-indigo-600 rounded-xl font-semibold hover:bg-indigo-50 transition-colors flex items-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  Find Doctors Nearby
+                </button>
+              </div>
+            </div>
+
+            {/* Follow-up Chat */}
+            <div className="bg-white rounded-2xl shadow-lg p-6">
+              <h4 className="font-bold text-lg mb-4 flex items-center gap-2 text-gray-800">
+                <Brain className="w-5 h-5 text-blue-500" />
+                Ask Follow-up Questions
+              </h4>
+              
+              {chatHistory.slice(1).length > 0 && (
+                <div className="space-y-4 mb-4 max-h-64 overflow-y-auto">
+                  {chatHistory.slice(1).map((msg, i) => {
+                    const content = typeof msg.content === 'string' ? msg.content : '';
+                    
+                    // Function to render markdown-style formatting
+                    const renderFormattedText = (text) => {
+                      // Split by bold markers
+                      const parts = text.split(/(\*\*.*?\*\*)/g);
+                      
+                      return parts.map((part, idx) => {
+                        // Check if this part is bold
+                        if (part.startsWith('**') && part.endsWith('**')) {
+                          return <strong key={idx}>{part.slice(2, -2)}</strong>;
+                        }
+                        
+                        // Check for bullet points and line breaks
+                        const lines = part.split('\n');
+                        return lines.map((line, lineIdx) => {
+                          // Handle bullet points
+                          if (line.trim().startsWith('•') || line.trim().startsWith('-')) {
+                            return (
+                              <div key={`${idx}-${lineIdx}`} className="ml-4 my-1">
+                                {line}
+                              </div>
+                            );
+                          }
+                          // Handle numbered lists
+                          if (/^\d+\./.test(line.trim())) {
+                            return (
+                              <div key={`${idx}-${lineIdx}`} className="ml-4 my-1">
+                                {line}
+                              </div>
+                            );
+                          }
+                          // Regular text with line breaks
+                          return lineIdx < lines.length - 1 ? (
+                            <span key={`${idx}-${lineIdx}`}>
+                              {line}
+                              <br />
+                            </span>
+                          ) : (
+                            <span key={`${idx}-${lineIdx}`}>{line}</span>
+                          );
+                        });
+                      });
+                    };
+                    
+                    return (
+                      <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[80%] p-4 rounded-2xl ${
+                          msg.role === 'user' 
+                            ? 'bg-blue-600 text-white' 
+                            : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          <div className="text-sm">
+                            {renderFormattedText(content)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <input
+                  type="text"
+                  value={followUpQuestion}
+                  onChange={(e) => setFollowUpQuestion(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && askFollowUp()}
+                  placeholder="Ask anything about your condition..."
+                  className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
+                  disabled={loading}
+                />
+                <button
+                  onClick={askFollowUp}
+                  disabled={loading || !followUpQuestion.trim()}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold disabled:opacity-50 hover:bg-blue-700 transition-colors"
+                >
+                  {loading ? 'Thinking...' : 'Ask'}
+                </button>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-4">
+              <button
+                onClick={() => {
+                  setStep('welcome');
+                  setSymptoms('');
+                  setAge('');
+                  setGender('');
+                  setDuration('');
+                  setSeverity('');
+                  setAnalysis(null);
+                  setChatHistory([]);
+                }}
+                className="flex-1 px-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-bold hover:shadow-xl transition-all duration-300 flex items-center justify-center gap-2"
+              >
+                <Activity className="w-5 h-5" />
+                New Symptom Check
+              </button>
+            </div>
+
+            {/* Disclaimer */}
+            <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-6 flex gap-4">
+              <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0 mt-1" />
+              <div>
+                <h4 className="font-bold text-red-900 mb-2">Medical Disclaimer</h4>
+                <p className="text-red-800 text-sm">
+                  This AI assessment is for informational purposes only and does not constitute medical advice. If symptoms are severe or worsening, seek immediate medical attention. Always consult with qualified healthcare professionals for diagnosis and treatment.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {loading && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-white rounded-3xl p-12 shadow-2xl flex flex-col items-center gap-6 max-w-md">
+              <div className="relative">
+                <div className="w-24 h-24 border-8 border-blue-200 rounded-full"></div>
+                <div className="w-24 h-24 border-8 border-blue-600 rounded-full border-t-transparent absolute top-0 left-0 animate-spin"></div>
+                <Brain className="w-12 h-12 text-blue-600 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" />
+              </div>
+              <div className="text-center">
+                <h3 className="text-2xl font-bold mb-2">Analyzing Your Symptoms</h3>
+                <p className="text-gray-600">Our AI is processing your information using advanced medical algorithms...</p>
+              </div>
+              <div className="flex gap-2">
+                <div className="w-3 h-3 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
+                <div className="w-3 h-3 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                <div className="w-3 h-3 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="relative z-10 bg-gray-900 text-white mt-16 py-8">
+        <div className="max-w-6xl mx-auto px-6 text-center">
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <Stethoscope className="w-8 h-8 text-blue-400" />
+            <span className="text-2xl font-bold">MediCheck</span>
+          </div>
+          <p className="text-gray-400 mb-4">
+            Developed with ❤️ by Team Quantum Giant | Advanced AI Healthcare Solutions
+          </p>
+          <div className="flex justify-center gap-6 text-sm text-gray-500">
+            <span>Privacy Policy</span>
+            <span>•</span>
+            <span>Terms of Service</span>
+            <span>•</span>
+            <span>Contact Support</span>
+          </div>
+          <p className="text-xs text-gray-600 mt-4">
+            © 2026 MediCheck by Quantum Giant. All rights reserved. | Made in India 🇮🇳
+          </p>
+        </div>
+      </footer>
+    </div>
+  );
+}
+    </script>
+</body>
+</html>
